@@ -133,9 +133,59 @@ class StripeTransfersToXeroCommand extends Command
 	}
 }
 
+class StripeBalanceToXeroCommand extends Command
+{
+	protected function configure()
+	{
+		$this
+			->setName('balance')
+			->setDescription('Convert a Stripe balance export to a Xero compatible bank statement')
+			->addArgument(
+				'export_file',
+				InputArgument::REQUIRED,
+				'Path to the Stripe balance export file'
+			);
+		;
+	}
+
+	protected function execute(InputInterface $input, OutputInterface $output)
+	{
+		$export_file = $input->getArgument('export_file');
+
+		if (file_exists($export_file)) {
+			$reader = Reader::createFromPath($export_file);
+			$headers = $reader->fetchOne();
+			$data = $reader->fetchAssoc($headers);
+
+			$writer = Writer::createFromFileObject(new SplTempFileObject());
+			$writer->setDelimiter($reader->getDelimiter());
+			$writer->setNewline($reader->getNewline());
+			$writer->setEncodingFrom($reader->getEncodingFrom());
+
+			$writer->insertOne(['Date', 'Amount', 'Payee', 'Description', 'Reference']);
+			$output->writeln('Converting '. count($data) .' Stripe balance transactions...');
+			foreach ($data as $row) {
+				if ($data[0] == $row) continue;
+
+				$date = date('Y-m-d', strtotime($row['Created (UTC)']));
+				$amount = $row['Net'];
+				$payee = 'Stripe Customer';
+				$description = $row['Description'];
+				$reference = $row['Source'];
+				$writer->insertOne([$date, $amount, $payee, $description, $reference]);
+			}
+			file_put_contents('stripe-balance-to-xero.csv', $writer);
+			$output->writeln('<info>File stripe-balance-to-xero.csv created</info>');
+		} else {
+			$output->writeln('<error>File '. $export_file .' does not exist</error>');
+		}
+	}
+}
+
 use Symfony\Component\Console\Application;
 
 $application = new Application();
 $application->add(new StripePaymentsToXeroCommand());
 $application->add(new StripeTransfersToXeroCommand());
+$application->add(new StripeBalanceToXeroCommand());
 $application->run();
