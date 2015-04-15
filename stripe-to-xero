@@ -1,0 +1,141 @@
+#!/usr/bin/env php
+<?php
+
+date_default_timezone_set('UTC');
+
+require_once('vendor/autoload.php');
+
+use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Input\InputArgument;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\InputOption;
+use Symfony\Component\Console\Output\OutputInterface;
+use League\Csv\Reader;
+use League\Csv\Writer;
+
+class StripePaymentsToXeroCommand extends Command
+{
+	protected function configure()
+	{
+		$this
+			->setName('payments')
+			->setDescription('Convert a Stripe payments export to a Xero compatible bank statement')
+			->addArgument(
+				'export_file',
+				InputArgument::REQUIRED,
+				'Path to the Stripe payments export file'
+			);
+		;
+	}
+
+	protected function execute(InputInterface $input, OutputInterface $output)
+	{
+		$export_file = $input->getArgument('export_file');
+
+		if (file_exists($export_file)) {
+			$reader = Reader::createFromPath($export_file);
+			$headers = $reader->fetchOne();
+			$data = $reader
+				->addFilter([$this, 'filterByStatus'])
+				->fetchAssoc($headers);
+
+			$writer = Writer::createFromFileObject(new SplTempFileObject());
+			$writer->setDelimiter($reader->getDelimiter());
+			$writer->setNewline($reader->getNewline());
+			$writer->setEncodingFrom($reader->getEncodingFrom());
+
+			$writer->insertOne(['Date', 'Amount', 'Payee', 'Description', 'Reference']);
+			$output->writeln('Converting '. count($data) .' Stripe payments...');
+			foreach ($data as $row) {
+				$date = date('Y-m-d', strtotime($row['Created (UTC)']));
+				$amount = isset($row['Converted Amount']) && $row['Converted Amount'] ? $row['Converted Amount'] : $row['Amount'];
+				$payee = $row['Customer Description'] ? $row['Customer Description'] : 'Stripe Customer';
+				$description = $row['Description'];
+				$reference = $row['id'];
+				$writer->insertOne([$date, $amount, $payee, $description, $reference]);
+
+				if ($row['Amount Refunded'] > 0.00) {
+					$amount = isset($row['Converted Amount Refunded']) && $row['Converted Amount Refunded'] ? $row['Converted Amount Refunded'] * -1 : $row['Amount Refunded'] * -1;
+					$description = trim($description . ' (Refunded)');
+					$writer->insertOne([$date, $amount, $payee, $description, $reference]);
+				}
+				if ($row['Fee'] > 0.00) {
+					$amount = $row['Fee'] * -1;
+					$payee = 'Stripe';
+					$description = 'Stripe Fee';
+					$writer->insertOne([$date, $amount, $payee, $description, $reference]);
+				}
+			}
+			file_put_contents('stripe-payments-to-xero.csv', $writer);
+			$output->writeln('<info>File stripe-payments-to-xero.csv created</info>');
+		} else {
+			$output->writeln('<error>File '. $export_file .' does not exist</error>');
+		}
+	}
+
+	public function filterByStatus($row)
+	{
+		return strtolower($row[12]) == 'paid' || strtolower($row[12]) == 'refunded';
+	}
+}
+
+class StripeTransfersToXeroCommand extends Command
+{
+	protected function configure()
+	{
+		$this
+			->setName('transfers')
+			->setDescription('Convert a Stripe transfers export to a Xero compatible bank statement')
+			->addArgument(
+				'export_file',
+				InputArgument::REQUIRED,
+				'Path to the Stripe transfers export file'
+			);
+		;
+	}
+
+	protected function execute(InputInterface $input, OutputInterface $output)
+	{
+		$export_file = $input->getArgument('export_file');
+
+		if (file_exists($export_file)) {
+			$reader = Reader::createFromPath($export_file);
+			$headers = $reader->fetchOne();
+			$data = $reader
+				->addFilter([$this, 'filterByStatus'])
+				->fetchAssoc($headers);
+
+			$writer = Writer::createFromFileObject(new SplTempFileObject());
+			$writer->setDelimiter($reader->getDelimiter());
+			$writer->setNewline($reader->getNewline());
+			$writer->setEncodingFrom($reader->getEncodingFrom());
+
+			$writer->insertOne(['Date', 'Amount', 'Payee', 'Description', 'Reference']);
+			$output->writeln('Converting '. count($data) .' Stripe transfers...');
+			foreach ($data as $row) {
+				$date = date('Y-m-d', strtotime($row['Date']));
+				$amount = $row['Amount'] * -1;
+				$payee = 'Stripe';
+				$description = ucwords(strtolower($row['Description']));
+				$reference = $row['ID'];
+				$writer->insertOne([$date, $amount, $payee, $description, $reference]);
+			}
+			file_put_contents('stripe-transfers-to-xero.csv', $writer);
+			$output->writeln('<info>File stripe-transfers-to-xero.csv created</info>');
+		} else {
+			$output->writeln('<error>File '. $export_file .' does not exist</error>');
+		}
+	}
+
+	public function filterByStatus($row)
+	{
+		return strtolower($row[3]) == 'paid';
+	}
+}
+
+use Symfony\Component\Console\Application;
+
+$application = new Application();
+$application->add(new StripePaymentsToXeroCommand());
+$application->add(new StripeTransfersToXeroCommand());
+$application->run();

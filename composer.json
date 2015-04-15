@@ -1,5 +1,15 @@
 {
-  "require": {
-    "stripe/stripe-php": "2.*"
-  }
+    "name": "gilbitron/stripe-to-xero",
+    "description": "PHP CLI to convert Stripe exports to Xero compatible bank statements",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Gilbert Pellegrom",
+            "email": "gilbert@pellegrom.me"
+        }
+    ],
+    "require": {
+        "league/csv": "~7.0",
+        "symfony/console": "~2.6"
+    }
 }
